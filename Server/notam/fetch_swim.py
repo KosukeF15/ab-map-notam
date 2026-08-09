@@ -76,6 +76,17 @@ def dismiss_ok_dialog(page: Page) -> None:
     page.keyboard.press("Enter")
 
 
+def confirm_download_dialog(page: Page) -> None:
+    dialog = page.locator("mat-dialog-container:visible, [role='dialog']:visible").last
+    if not dialog.count() or not dialog.is_visible():
+        return
+    for label in ("ダウンロード", "実行", "はい", "OK"):
+        button = dialog.get_by_text(label, exact=True).last
+        if button.count() and button.is_visible() and button.is_enabled():
+            button.click(force=True)
+            return
+
+
 def process_group(page: Page, group: list[str], output_dir: Path, batch: int) -> dict | None:
     print(f"Processing batch {batch}: {' '.join(group)}")
     try:
@@ -94,7 +105,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     configure_scope(page, enroute_only, other_only)
     page.click("text='検索'", force=True)
 
-    download_button = page.locator("button:has-text('ダウンロード'), a:has-text('ダウンロード')").last
+    download_button = page.get_by_text("ダウンロード", exact=True).first
     search_deadline = time.monotonic() + 120
     while time.monotonic() < search_deadline:
         if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
@@ -111,17 +122,43 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
         print(f"Download action unavailable for batch {batch}; url={page.url}")
         raise RuntimeError(f"Search did not make the download action available for batch {batch}")
 
+    zip_payloads: list[bytes] = []
+
+    def capture_zip_response(response) -> None:
+        content_type = response.headers.get("content-type", "").lower()
+        disposition = response.headers.get("content-disposition", "").lower()
+        if "zip" not in content_type and "attachment" not in disposition and ".zip" not in disposition:
+            return
+        try:
+            payload = response.body()
+            if payload.startswith(b"PK"):
+                zip_payloads.append(payload)
+        except Exception:
+            pass
+
+    page.on("response", capture_zip_response)
     try:
         with page.expect_download(timeout=120_000) as download_info:
             download_button.click(force=True)
+            for _ in range(20):
+                confirm_download_dialog(page)
+                if zip_payloads:
+                    break
+                time.sleep(0.5)
         download_info.value.save_as(output_dir / f"Notam_Batch_{batch}.zip")
     except PlaywrightTimeoutError:
-        print(
-            f"Download event timed out for batch {batch}; "
-            f"button_visible={download_button.is_visible()} "
-            f"button_enabled={download_button.is_enabled()}"
-        )
-        raise
+        if zip_payloads:
+            (output_dir / f"Notam_Batch_{batch}.zip").write_bytes(zip_payloads[-1])
+            print(f"Captured batch {batch} from the authenticated ZIP response.")
+        else:
+            print(
+                f"Download event timed out for batch {batch}; "
+                f"button_visible={download_button.is_visible()} "
+                f"button_enabled={download_button.is_enabled()}"
+            )
+            raise
+    finally:
+        page.remove_listener("response", capture_zip_response)
 
     page.click("text='リスト'", force=True)
     page.locator("text=/印刷.*全件/").first.click(force=True, timeout=30_000)
