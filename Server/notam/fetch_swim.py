@@ -15,7 +15,7 @@ import re
 import time
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 
 AIRPORT_GROUPS = [
@@ -65,7 +65,19 @@ def configure_scope(page: Page, enroute_only: bool, other_only: bool) -> None:
     set_checkbox(page, "エンルート", not other_only)
 
 
+def dismiss_ok_dialog(page: Page) -> None:
+    try:
+        ok_button = page.locator("button:has-text('OK')").last
+        if ok_button.count() and ok_button.is_visible():
+            ok_button.click(force=True)
+            return
+    except Exception:
+        pass
+    page.keyboard.press("Enter")
+
+
 def process_group(page: Page, group: list[str], output_dir: Path, batch: int) -> dict | None:
+    print(f"Processing batch {batch}: {' '.join(group)}")
     try:
         clear_button = page.locator("text='クリア'")
         if clear_button.is_visible():
@@ -81,18 +93,35 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     page.keyboard.press("Enter")
     configure_scope(page, enroute_only, other_only)
     page.click("text='検索'", force=True)
-    time.sleep(3)
 
-    if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
-        try:
-            page.click("button:has-text('OK')", force=True, timeout=3_000)
-        except Exception:
-            page.keyboard.press("Enter")
-        return None
+    download_button = page.locator("button:has-text('ダウンロード'), a:has-text('ダウンロード')").last
+    search_deadline = time.monotonic() + 120
+    while time.monotonic() < search_deadline:
+        if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
+            dismiss_ok_dialog(page)
+            return None
+        if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
+            print("Search reached the 1000-item limit; continuing with the available results.")
+            dismiss_ok_dialog(page)
+            time.sleep(2)
+        if download_button.count() and download_button.is_visible() and download_button.is_enabled():
+            break
+        time.sleep(1)
+    else:
+        print(f"Download action unavailable for batch {batch}; url={page.url}")
+        raise RuntimeError(f"Search did not make the download action available for batch {batch}")
 
-    with page.expect_download(timeout=60_000) as download_info:
-        page.click("text='ダウンロード'", force=True)
-    download_info.value.save_as(output_dir / f"Notam_Batch_{batch}.zip")
+    try:
+        with page.expect_download(timeout=120_000) as download_info:
+            download_button.click(force=True)
+        download_info.value.save_as(output_dir / f"Notam_Batch_{batch}.zip")
+    except PlaywrightTimeoutError:
+        print(
+            f"Download event timed out for batch {batch}; "
+            f"button_visible={download_button.is_visible()} "
+            f"button_enabled={download_button.is_enabled()}"
+        )
+        raise
 
     page.click("text='リスト'", force=True)
     page.locator("text=/印刷.*全件/").first.click(force=True, timeout=30_000)
@@ -161,4 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
