@@ -26,23 +26,37 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check SWIM secret configuration
+        id: swim
         if: github.event_name != 'push'
+        env:
+          SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
+          SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -n "$SWIM_USER_ID" && -n "$SWIM_PASSWORD" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SWIM_USER_ID and SWIM_PASSWORD are not configured; keeping the current feed."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
         with:
           python-version: "3.12"
           cache: pip
-      - if: github.event_name != 'push'
+      - if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
         run: pip install -r Server/notam/requirements.txt
-      - if: github.event_name != 'push'
+      - if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
         run: python -m playwright install --with-deps chromium
       - name: Acquire current SWIM data
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
         env:
           SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
           SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
         run: python Server/notam/fetch_swim.py
       - name: Export the iOS JSON feed
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
         run: python Server/notam/export_notams.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
