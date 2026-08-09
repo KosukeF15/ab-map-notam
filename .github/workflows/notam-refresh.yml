@@ -2,6 +2,12 @@ name: Refresh NOTAM feed
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - public/**
+      - .github/workflows/notam-refresh.yml
   schedule:
     - cron: "17 */3 * * *"
 
@@ -21,17 +27,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        if: github.event_name != 'push'
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r Server/notam/requirements.txt
-      - run: python -m playwright install --with-deps chromium
+      - if: github.event_name != 'push'
+        run: pip install -r Server/notam/requirements.txt
+      - if: github.event_name != 'push'
+        run: python -m playwright install --with-deps chromium
       - name: Acquire current SWIM data
+        if: github.event_name != 'push'
         env:
           SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
           SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
         run: python Server/notam/fetch_swim.py
       - name: Export the iOS JSON feed
+        if: github.event_name != 'push'
         run: python Server/notam/export_notams.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
