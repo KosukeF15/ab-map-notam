@@ -155,6 +155,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
             (output_dir / f"Notam_Batch_{batch}.zip").write_bytes(zip_payloads[-1])
             print(f"Captured batch {batch} from the authenticated ZIP response.")
         else:
+            dismiss_ok_dialog(page)
             print(
                 f"Download event timed out for batch {batch}; "
                 f"button_visible={download_button.is_visible()} "
@@ -171,7 +172,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     while time.monotonic() < search_deadline:
         if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
             dismiss_ok_dialog(page)
-            return None
+            return {}
         if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
             print("Search reached the 1000-item limit; continuing with the available results.")
             dismiss_ok_dialog(page)
@@ -229,14 +230,21 @@ def main() -> None:
         mapping = {}
         batch = 1
         for group in AIRPORT_GROUPS:
-            result = process_group(service_page, group, args.output, batch)
-            if result is None and len(group) > 1:
+            try:
+                result = process_group(service_page, group, args.output, batch)
+            except PlaywrightTimeoutError:
+                if len(group) == 1:
+                    raise
+                print(
+                    "Bulk download was not generated; retrying this group "
+                    "one location at a time."
+                )
                 for code in group:
                     individual = process_group(service_page, [code], args.output, batch)
-                    if individual:
+                    if individual is not None:
                         mapping.update(individual)
                         batch += 1
-            elif result:
+            else:
                 mapping.update(result)
                 batch += 1
 
