@@ -1,0 +1,6 @@
+.DS_Store
+Server/notam/downloads/
+Server/notam/notam_mapping.json
+__pycache__/
+*.pyc
+

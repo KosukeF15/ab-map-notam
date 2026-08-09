@@ -1,0 +1,42 @@
+name: Refresh NOTAM feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */3 * * *"
+
+concurrency:
+  group: notam-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r Server/notam/requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Acquire current SWIM data
+        env:
+          SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
+          SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
+        run: python Server/notam/fetch_swim.py
+      - name: Export the iOS JSON feed
+        run: python Server/notam/export_notams.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Publish to GitHub Pages
+        uses: actions/deploy-pages@v4
+        id: deployment
