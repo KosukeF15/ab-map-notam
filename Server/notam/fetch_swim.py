@@ -32,6 +32,14 @@ AIRPORT_GROUPS = [
 ]
 
 
+class NoDataAvailable(Exception):
+    """SWIM reported that the current search has no matching NOTAM."""
+
+
+class DownloadLimitExceeded(Exception):
+    """SWIM refused a bulk download because it exceeded the result limit."""
+
+
 def extract_notam_mapping(text: str) -> dict:
     mapping = {}
     for block in re.split(r"(?=\([A-Z]\d{4}/\d{2}\s+NOTAM[NRC])", text):
@@ -145,11 +153,20 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
         with page.expect_download(timeout=120_000) as download_info:
             download_button.click(force=True)
             for _ in range(20):
+                if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
+                    dismiss_ok_dialog(page)
+                    raise NoDataAvailable
+                if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
+                    dismiss_ok_dialog(page)
+                    raise DownloadLimitExceeded
                 confirm_download_dialog(page)
                 if zip_payloads:
                     break
                 time.sleep(0.5)
         download_info.value.save_as(output_dir / f"Notam_Batch_{batch}.zip")
+    except NoDataAvailable:
+        print(f"No current NOTAM data for batch {batch}; skipping it.")
+        return None
     except PlaywrightTimeoutError:
         if zip_payloads:
             (output_dir / f"Notam_Batch_{batch}.zip").write_bytes(zip_payloads[-1])
@@ -232,7 +249,7 @@ def main() -> None:
         for group in AIRPORT_GROUPS:
             try:
                 result = process_group(service_page, group, args.output, batch)
-            except PlaywrightTimeoutError:
+            except (PlaywrightTimeoutError, DownloadLimitExceeded):
                 if len(group) == 1:
                     raise
                 print(
@@ -245,8 +262,9 @@ def main() -> None:
                         mapping.update(individual)
                         batch += 1
             else:
-                mapping.update(result)
-                batch += 1
+                if result is not None:
+                    mapping.update(result)
+                    batch += 1
 
         (args.output / "notam_mapping.json").write_text(
             json.dumps(mapping, ensure_ascii=False, indent=2) + "\n",
