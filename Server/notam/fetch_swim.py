@@ -191,7 +191,9 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
             all_text += "\n" + frame.locator("body").inner_text()
         except Exception:
             pass
-    page.click("text='戻る'", force=True)
+    page.locator("button:visible").filter(
+        has_text=re.compile(r"^\s*戻る\s*$")
+    ).last.click(force=True)
     location_input.wait_for(state="visible", timeout=60_000)
     return extract_notam_mapping(all_text)
 
