@@ -9,6 +9,7 @@ whenever its UI changes.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -103,36 +104,39 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     location_input.fill(" ".join(actual_codes), force=True)
     page.keyboard.press("Enter")
     configure_scope(page, enroute_only, other_only)
-    page.click("text='検索'", force=True)
 
-    download_button = page.get_by_text("ダウンロード", exact=True).first
-    search_deadline = time.monotonic() + 120
-    while time.monotonic() < search_deadline:
-        if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
-            dismiss_ok_dialog(page)
-            return None
-        if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
-            print("Search reached the 1000-item limit; continuing with the available results.")
-            dismiss_ok_dialog(page)
-            time.sleep(2)
-        if download_button.count() and download_button.is_visible() and download_button.is_enabled():
-            break
-        time.sleep(1)
-    else:
-        print(f"Download action unavailable for batch {batch}; url={page.url}")
-        raise RuntimeError(f"Search did not make the download action available for batch {batch}")
+    # The current SWIM guide specifies that bulk XML is downloaded directly
+    # from the search-condition form.  The download button must be pressed
+    # before Search; buttons shown in the results area are per-NOTAM GML
+    # downloads and follow a different workflow.
+    download_button = page.locator("button").filter(
+        has_text=re.compile(r"^\s*ダウンロード\s*$")
+    ).first
+    download_button.wait_for(state="visible", timeout=60_000)
+    if not download_button.is_enabled():
+        raise RuntimeError(f"XML download action is disabled for batch {batch}")
 
     zip_payloads: list[bytes] = []
 
     def capture_zip_response(response) -> None:
         content_type = response.headers.get("content-type", "").lower()
         disposition = response.headers.get("content-disposition", "").lower()
-        if "zip" not in content_type and "attachment" not in disposition and ".zip" not in disposition:
-            return
         try:
             payload = response.body()
-            if payload.startswith(b"PK"):
+            if (
+                "zip" in content_type
+                or "attachment" in disposition
+                or ".zip" in disposition
+            ) and payload.startswith(b"PK"):
                 zip_payloads.append(payload)
+                return
+            if "json" in content_type and "download" in response.url.lower():
+                document = json.loads(payload)
+                encoded = document.get("datas", {}).get("fileData")
+                if encoded:
+                    decoded = base64.b64decode(encoded)
+                    if decoded.startswith(b"PK"):
+                        zip_payloads.append(decoded)
         except Exception:
             pass
 
@@ -159,6 +163,24 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
             raise
     finally:
         page.remove_listener("response", capture_zip_response)
+
+    # Search is a separate action used here only to build the legacy text-ID
+    # mapping consumed by the downstream converter.
+    page.get_by_text("検索", exact=True).first.click(force=True)
+    search_deadline = time.monotonic() + 120
+    while time.monotonic() < search_deadline:
+        if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
+            dismiss_ok_dialog(page)
+            return None
+        if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
+            print("Search reached the 1000-item limit; continuing with the available results.")
+            dismiss_ok_dialog(page)
+            time.sleep(2)
+        if page.get_by_text("リスト", exact=True).count():
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError(f"Search results did not become available for batch {batch}")
 
     page.click("text='リスト'", force=True)
     page.locator("text=/印刷.*全件/").first.click(force=True, timeout=30_000)
