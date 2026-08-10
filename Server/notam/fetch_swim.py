@@ -26,9 +26,12 @@ AIRPORT_GROUPS = [
     ["RJAA", "RJSA", "RJSS", "RJSN", "RJSI", "RJSR", "RJSC", "RJSK", "RJSM", "RJSF", "RJSY", "RJSD", "RJST", "RJSU", "RJSH", "RJSO", "RJSP"],
     ["RJTT", "RJTI", "RJTF", "RJTC", "RJTK", "RJTE", "RJTA", "RJTY", "RJTJ", "RJTL", "RJTU", "RJTS", "RJAH", "RJAK", "RJAM", "RJAW", "RJAF", "RJTO", "RJTH", "RJTQ"],
     ["RJGG", "RJNA", "RJNK", "RJNW", "RJNT", "RJNG", "RJNH", "RJNY", "RJOE", "RJNF", "RJAN", "RJAZ", "RJTR", "RJBB", "RJOO", "RJBE", "RJOY", "RJBD", "RJBM", "RJBT"],
-    ["RJBK", "RJDC", "RJOA", "RJOB", "RJOC", "RJOF", "RJOH", "RJOI", "RJOK", "RJOM", "RJOT", "RJOS", "RJOR", "RJOP", "RJOZ", "RJOW", "RJNO", "RJFF", "RJFE", "RJFG"],
-    ["RJFK", "RJFM", "RJFN", "RJFO", "RJFR", "RJFS", "RJFT", "RJFU", "RJFY", "RJFA", "RJFC", "RJFZ", "RJFQ", "RJDK", "RJDA", "RJDO", "RJDB", "RJDT", "ROAH", "ROKD"],
-    ["ROTM", "ROAD", "ROIG", "ROIT", "ROKJ", "ROMD", "ROKT", "RORS", "RORH", "ROKR", "ROYN", "ROMY", "RORE", "RJKA", "RJKB", "RJKI", "RJKN", "RORY"],
+    ["RJBK", "RJDC", "RJOA", "RJOB", "RJOC", "RJOF", "RJOH", "RJOI", "RJOK", "RJOM"],
+    ["RJOT", "RJOS", "RJOR", "RJOP", "RJOZ", "RJOW", "RJNO", "RJFF", "RJFE", "RJFG"],
+    ["RJFK", "RJFM", "RJFN", "RJFO", "RJFR", "RJFS", "RJFT", "RJFU", "RJFY", "RJFA"],
+    ["RJFC", "RJFZ", "RJFQ", "RJDK", "RJDA", "RJDO", "RJDB", "RJDT", "ROAH", "ROKD"],
+    ["ROTM", "ROAD", "ROIG", "ROIT", "ROKJ", "ROMD", "ROKT", "RORS", "RORH"],
+    ["ROKR", "ROYN", "ROMY", "RORE", "RJKA", "RJKB", "RJKI", "RJKN", "RORY"],
 ]
 
 MAX_LOCATION_ATTEMPTS = 3
