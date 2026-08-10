@@ -161,6 +161,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
         raise RuntimeError(f"XML download action is disabled for batch {batch}")
 
     zip_payloads: list[bytes] = []
+    downloads = []
 
     def capture_zip_response(response) -> None:
         content_type = response.headers.get("content-type", "").lower()
@@ -184,22 +185,34 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
         except Exception:
             pass
 
+    def capture_download(download) -> None:
+        downloads.append(download)
+
     page.on("response", capture_zip_response)
+    page.on("download", capture_download)
     try:
-        with page.expect_download(timeout=120_000) as download_info:
-            download_button.click(force=True)
-            for _ in range(20):
-                if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
-                    dismiss_ok_dialog(page)
-                    raise NoDataAvailable
-                if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
-                    dismiss_ok_dialog(page)
-                    raise DownloadLimitExceeded
-                confirm_download_dialog(page)
-                if zip_payloads:
-                    break
-                time.sleep(0.5)
-        download_info.value.save_as(output_dir / f"Notam_Batch_{batch}.zip")
+        download_button.click(force=True)
+        deadline = time.monotonic() + 120
+        while not downloads and not zip_payloads:
+            if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
+                dismiss_ok_dialog(page)
+                raise NoDataAvailable
+            if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
+                dismiss_ok_dialog(page)
+                raise DownloadLimitExceeded
+            confirm_download_dialog(page)
+            if time.monotonic() >= deadline:
+                raise PlaywrightTimeoutError(
+                    f"No ZIP download or authenticated ZIP response for batch {batch}"
+                )
+            time.sleep(0.5)
+
+        destination = output_dir / f"Notam_Batch_{batch}.zip"
+        if downloads:
+            downloads[-1].save_as(destination)
+        else:
+            destination.write_bytes(zip_payloads[-1])
+            print(f"Captured batch {batch} from the authenticated ZIP response.")
     except NoDataAvailable:
         print(f"No current NOTAM data for batch {batch}; skipping it.")
         return None
@@ -217,6 +230,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
             raise
     finally:
         page.remove_listener("response", capture_zip_response)
+        page.remove_listener("download", capture_download)
 
     # Search is a separate action used here only to build the legacy text-ID
     # mapping consumed by the downstream converter.
