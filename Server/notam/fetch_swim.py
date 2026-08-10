@@ -282,6 +282,7 @@ def main() -> None:
         service_url = service_page.url
 
         mapping = {}
+        failed_codes: list[str] = []
         batch = 1
         for group in AIRPORT_GROUPS:
             try:
@@ -294,22 +295,53 @@ def main() -> None:
                     MAX_LOCATION_ATTEMPTS if len(group) == 1 else 1,
                 )
             except (PlaywrightTimeoutError, DownloadLimitExceeded, RuntimeError):
+                downloaded = args.output / f"Notam_Batch_{batch}.zip"
+                if downloaded.exists():
+                    print(
+                        f"Batch {batch} XML was downloaded before the text-list step failed; "
+                        "keeping the XML with an empty domestic-ID mapping."
+                    )
+                    batch += 1
+                    continue
                 if len(group) == 1:
-                    raise
+                    failed_codes.extend(group)
+                    print(f"Giving up this cycle for {' '.join(group)}; continuing with other locations.")
+                    try:
+                        recover_search_page(service_page, service_url)
+                    except Exception:
+                        pass
+                    continue
                 recover_search_page(service_page, service_url)
                 print(
                     "Bulk download was not generated; retrying this group "
                     "one location at a time."
                 )
                 for code in group:
-                    individual = process_group_with_retries(
-                        service_page,
-                        [code],
-                        args.output,
-                        batch,
-                        service_url,
-                        MAX_LOCATION_ATTEMPTS,
-                    )
+                    try:
+                        individual = process_group_with_retries(
+                            service_page,
+                            [code],
+                            args.output,
+                            batch,
+                            service_url,
+                            MAX_LOCATION_ATTEMPTS,
+                        )
+                    except (PlaywrightTimeoutError, DownloadLimitExceeded, RuntimeError):
+                        downloaded = args.output / f"Notam_Batch_{batch}.zip"
+                        if downloaded.exists():
+                            print(
+                                f"Keeping downloaded XML for {code}; its domestic-ID text mapping "
+                                "was not available."
+                            )
+                            batch += 1
+                        else:
+                            failed_codes.append(code)
+                            print(f"Giving up this cycle for {code}; continuing with other locations.")
+                        try:
+                            recover_search_page(service_page, service_url)
+                        except Exception:
+                            pass
+                        continue
                     if individual is not None:
                         mapping.update(individual)
                         batch += 1
@@ -318,12 +350,30 @@ def main() -> None:
                     mapping.update(result)
                     batch += 1
 
+        zip_count = len(list(args.output.glob("Notam_Batch_*.zip")))
         (args.output / "notam_mapping.json").write_text(
             json.dumps(mapping, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        (args.output / "fetch_status.json").write_text(
+            json.dumps(
+                {
+                    "downloadedBatches": zip_count,
+                    "failedCodes": failed_codes,
+                    "complete": not failed_codes,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
         browser.close()
-    print(f"Fetched {len(mapping)} NOTAM text records into {args.output}")
+    if zip_count == 0:
+        raise RuntimeError("SWIM returned no usable XML batches")
+    print(
+        f"Fetched {zip_count} XML batches and {len(mapping)} NOTAM text records "
+        f"into {args.output}; failed locations: {', '.join(failed_codes) or 'none'}"
+    )
 
 
 if __name__ == "__main__":

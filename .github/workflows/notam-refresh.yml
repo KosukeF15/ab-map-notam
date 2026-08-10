@@ -2,6 +2,12 @@ name: Refresh NOTAM feed
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/notam-refresh.yml"
+      - "Server/notam/**"
   schedule:
     - cron: "17 */3 * * *"
 
@@ -17,7 +23,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Preserve the last known good feed
@@ -72,7 +78,7 @@ jobs:
         id: acquire
         if: steps.swim.outputs.configured == 'true'
         continue-on-error: true
-        timeout-minutes: 35
+        timeout-minutes: 75
         env:
           SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
           SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
@@ -90,8 +96,39 @@ jobs:
           feed = json.loads(candidate.read_text(encoding="utf-8"))
           if not feed.get("updatedAt") or not feed.get("items"):
               raise ValueError("newly exported feed is empty or invalid")
-          Path("public/v1/notams.json").write_bytes(candidate.read_bytes())
-          print(f"Validated {len(feed['items'])} newly exported NOTAM records.")
+          published = Path("public/v1/notams.json")
+          status_path = Path("Server/notam/downloads/fetch_status.json")
+          status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+          failed_codes = set(status.get("failedCodes", []))
+
+          if failed_codes and published.exists():
+              previous = json.loads(published.read_text(encoding="utf-8"))
+              current_by_id = {item["id"]: item for item in feed["items"]}
+
+              def belongs_to_failed_location(item):
+                  location = item.get("locationCode")
+                  category = item.get("category")
+                  if location in failed_codes:
+                      return True
+                  if "RJJJ_ENROUTE" in failed_codes and category in {"rjjj", "rjjwxyz"}:
+                      return True
+                  if "RJJJ_OTHER" in failed_codes and category in {"rjdr", "robl", "rjtd"}:
+                      return True
+                  return False
+
+              fallback = [
+                  item for item in previous.get("items", [])
+                  if belongs_to_failed_location(item) and item.get("id") not in current_by_id
+              ]
+              feed["items"].extend(fallback)
+              feed["items"].sort(key=lambda item: item["id"])
+              print(
+                  f"Merged {len(fallback)} last-known-good records for failed locations: "
+                  f"{', '.join(sorted(failed_codes))}."
+              )
+
+          published.write_text(json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(f"Validated {len(feed['items'])} current/fallback NOTAM records.")
           PY
       - name: Report last-known-good fallback
         if: steps.swim.outputs.configured == 'true' && steps.acquire.outcome == 'failure' && steps.previous.outputs.available == 'true'
