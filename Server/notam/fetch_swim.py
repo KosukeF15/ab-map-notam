@@ -31,6 +31,9 @@ AIRPORT_GROUPS = [
     ["ROTM", "ROAD", "ROIG", "ROIT", "ROKJ", "ROMD", "ROKT", "RORS", "RORH", "ROKR", "ROYN", "ROMY", "RORE", "RJKA", "RJKB", "RJKI", "RJKN", "RORY"],
 ]
 
+MAX_LOCATION_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5
+
 
 class NoDataAvailable(Exception):
     """SWIM reported that the current search has no matching NOTAM."""
@@ -94,6 +97,39 @@ def confirm_download_dialog(page: Page) -> None:
         if button.count() and button.is_visible() and button.is_enabled():
             button.click(force=True)
             return
+
+
+def recover_search_page(page: Page, search_url: str) -> None:
+    """Reload a clean SWIM search form after a transient UI failure."""
+    page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
+    page.locator("input.mat-chip-input").nth(2).wait_for(
+        state="visible", timeout=60_000
+    )
+
+
+def process_group_with_retries(
+    page: Page,
+    group: list[str],
+    output_dir: Path,
+    batch: int,
+    search_url: str,
+    attempts: int,
+) -> dict | None:
+    """Retry transient SWIM timeouts without publishing a partial feed."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return process_group(page, group, output_dir, batch)
+        except (PlaywrightTimeoutError, RuntimeError):
+            if attempt >= attempts:
+                raise
+            print(
+                f"Transient SWIM failure for {' '.join(group)} "
+                f"(attempt {attempt}/{attempts}); retrying with a fresh page."
+            )
+            time.sleep(RETRY_DELAY_SECONDS * attempt)
+            recover_search_page(page, search_url)
+
+    raise AssertionError("retry loop exited unexpectedly")
 
 
 def process_group(page: Page, group: list[str], output_dir: Path, batch: int) -> dict | None:
@@ -243,21 +279,37 @@ def main() -> None:
             target.click(force=True)
         service_page = popup.value
         service_page.wait_for_load_state("domcontentloaded")
+        service_url = service_page.url
 
         mapping = {}
         batch = 1
         for group in AIRPORT_GROUPS:
             try:
-                result = process_group(service_page, group, args.output, batch)
-            except (PlaywrightTimeoutError, DownloadLimitExceeded):
+                result = process_group_with_retries(
+                    service_page,
+                    group,
+                    args.output,
+                    batch,
+                    service_url,
+                    MAX_LOCATION_ATTEMPTS if len(group) == 1 else 1,
+                )
+            except (PlaywrightTimeoutError, DownloadLimitExceeded, RuntimeError):
                 if len(group) == 1:
                     raise
+                recover_search_page(service_page, service_url)
                 print(
                     "Bulk download was not generated; retrying this group "
                     "one location at a time."
                 )
                 for code in group:
-                    individual = process_group(service_page, [code], args.output, batch)
+                    individual = process_group_with_retries(
+                        service_page,
+                        [code],
+                        args.output,
+                        batch,
+                        service_url,
+                        MAX_LOCATION_ATTEMPTS,
+                    )
                     if individual is not None:
                         mapping.update(individual)
                         batch += 1

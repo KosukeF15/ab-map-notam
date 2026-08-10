@@ -2,12 +2,6 @@ name: Refresh NOTAM feed
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - public/**
-      - .github/workflows/notam-refresh.yml
   schedule:
     - cron: "17 */3 * * *"
 
@@ -26,9 +20,34 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - name: Preserve the last known good feed
+        id: previous
+        shell: bash
+        run: |
+          if python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          url = "https://kosukef15.github.io/ab-map-notam/v1/notams.json"
+          destination = Path("public/v1/notams.json")
+          with urllib.request.urlopen(url, timeout=30) as response:
+              payload = response.read()
+          feed = json.loads(payload)
+          if not feed.get("updatedAt") or not feed.get("items"):
+              raise ValueError("published feed is empty or invalid")
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          destination.write_bytes(payload)
+          print(f"Preserved {len(feed['items'])} previously published NOTAM records.")
+          PY
+          then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not preserve the currently published NOTAM feed."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Check SWIM secret configuration
         id: swim
-        if: github.event_name != 'push'
         env:
           SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
           SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
@@ -41,23 +60,55 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/setup-python@v7
-        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
+        if: steps.swim.outputs.configured == 'true'
         with:
           python-version: "3.12"
           cache: pip
-      - if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
+      - if: steps.swim.outputs.configured == 'true'
         run: pip install -r Server/notam/requirements.txt
-      - if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
+      - if: steps.swim.outputs.configured == 'true'
         run: python -m playwright install --with-deps chromium
       - name: Acquire current SWIM data
-        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
+        id: acquire
+        if: steps.swim.outputs.configured == 'true'
+        continue-on-error: true
+        timeout-minutes: 35
         env:
           SWIM_USER_ID: ${{ secrets.SWIM_USER_ID }}
           SWIM_PASSWORD: ${{ secrets.SWIM_PASSWORD }}
-        run: python Server/notam/fetch_swim.py
+        run: python -u Server/notam/fetch_swim.py
       - name: Export the iOS JSON feed
-        if: github.event_name != 'push' && steps.swim.outputs.configured == 'true'
-        run: python Server/notam/export_notams.py
+        if: steps.acquire.outcome == 'success'
+        shell: bash
+        run: |
+          python Server/notam/export_notams.py --output /tmp/notams.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          candidate = Path("/tmp/notams.json")
+          feed = json.loads(candidate.read_text(encoding="utf-8"))
+          if not feed.get("updatedAt") or not feed.get("items"):
+              raise ValueError("newly exported feed is empty or invalid")
+          Path("public/v1/notams.json").write_bytes(candidate.read_bytes())
+          print(f"Validated {len(feed['items'])} newly exported NOTAM records.")
+          PY
+      - name: Report last-known-good fallback
+        if: steps.swim.outputs.configured == 'true' && steps.acquire.outcome == 'failure' && steps.previous.outputs.available == 'true'
+        run: echo "::warning::SWIM refresh failed after retries; publishing the last known good feed."
+      - name: Validate publishable feed
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("public/v1/notams.json")
+          feed = json.loads(path.read_text(encoding="utf-8"))
+          if not feed.get("updatedAt") or not feed.get("items"):
+              raise ValueError("no safe NOTAM feed is available for publication")
+          print(f"Publishing {len(feed['items'])} NOTAM records from {feed['updatedAt']}.")
+          PY
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
