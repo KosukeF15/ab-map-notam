@@ -402,6 +402,34 @@ def geometry(node, text: str, q: dict | None):
     return polygons, lines, circles, points
 
 
+def exclusion_circles(text: str) -> list[dict]:
+    """Return circular areas explicitly excluded from the main NOTAM shape."""
+    output = []
+    for match in re.finditer(
+        r"EXCLUD(?:ING|ES|E)\b(.*?)(?=\n\s*(?:ATC\s+WILL|PORTION\s+OF|RMK\s*:)|$)",
+        text.upper(),
+        re.DOTALL,
+    ):
+        block = match.group(1)
+        radius_match = RADIUS_PATTERN.search(block)
+        if not radius_match:
+            continue
+        radius = radius_nm(radius_match)
+        for coordinate_match in COORDINATE_TEXT_PATTERN.finditer(block):
+            coordinate = decimal_coordinate(coordinate_match.group(0))
+            if coordinate:
+                output.append({"center": coordinate, "radiusNM": radius})
+    by_key = {}
+    for circle in output:
+        key = (
+            round(circle["center"]["latitude"], 5),
+            round(circle["center"]["longitude"], 5),
+            round(circle["radiusNM"], 3),
+        )
+        by_key[key] = circle
+    return list(by_key.values())
+
+
 def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) -> list[dict]:
     output = []
     with zipfile.ZipFile(zip_path) as archive:
@@ -435,6 +463,7 @@ def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) 
                 if not center and location in airports:
                     center = airports[location]
                 polygons, lines, circles, points = geometry(node, text, q)
+                excluded_circles = exclusion_circles(text)
                 if not polygons and not lines and not circles and not points and center:
                     points = [center]
 
@@ -466,6 +495,7 @@ def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) 
                     "polygons": polygons,
                     "lines": lines,
                     "circles": circles,
+                    "excludedCircles": excluded_circles,
                     "points": points,
                     "lowerLimit": lower,
                     "upperLimit": upper,
