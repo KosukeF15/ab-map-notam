@@ -312,10 +312,18 @@ def geometry(node, text: str, q: dict | None):
         key = (round(circle["center"]["latitude"], 5), round(circle["center"]["longitude"], 5), round(circle["radiusNM"], 3))
         circles_by_key[key] = circle
     circles = list(circles_by_key.values())
-    line_points = [point for line in lines for point in line]
+    structural_points = (
+        [point for polygon in polygons for point in polygon]
+        + [point for line in lines for point in line]
+        + [circle["center"] for circle in circles]
+    )
     points = [
         point for point in unique_coordinates(psn_points + points)
-        if not any(abs(point["latitude"] - line_point["latitude"]) < 0.0001 and abs(point["longitude"] - line_point["longitude"]) < 0.0001 for line_point in line_points)
+        if not any(
+            abs(point["latitude"] - structural_point["latitude"]) < 0.0001
+            and abs(point["longitude"] - structural_point["longitude"]) < 0.0001
+            for structural_point in structural_points
+        )
     ]
 
     explicit = RADIUS_PATTERN.search(body)
@@ -326,10 +334,12 @@ def geometry(node, text: str, q: dict | None):
     if not polygons and not lines and not circles and q and q["radius"] > 0 and subject in area_subjects and center:
         circles.append({"center": center, "radiusNM": q["radius"]})
 
-    if psn_points:
-        return [], [], [], psn_points
-    if polygons or lines or circles:
-        points = []
+    # A single NOTAM may legitimately contain several independent positions,
+    # or a mixture of points, lines, circles and polygons.  The web map drew
+    # the first PSN coordinate separately from the remaining coordinates, but
+    # the JSON exporter used to return early here and silently discard those
+    # remaining shapes.  Keep every deduplicated, non-structural point so the
+    # native map can render the complete NOTAM.
     return polygons, lines, circles, points
 
 

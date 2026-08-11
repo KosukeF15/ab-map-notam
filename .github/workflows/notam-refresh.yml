@@ -72,6 +72,9 @@ jobs:
           cache: pip
       - if: steps.swim.outputs.configured == 'true'
         run: pip install -r Server/notam/requirements.txt
+      - name: Test NOTAM geometry parsing
+        if: steps.swim.outputs.configured == 'true'
+        run: python -m unittest discover -s Server/notam -p 'test_*.py' -v
       - if: steps.swim.outputs.configured == 'true'
         run: python -m playwright install --with-deps chromium
       - name: Acquire current SWIM data
