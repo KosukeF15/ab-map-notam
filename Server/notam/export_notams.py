@@ -272,10 +272,38 @@ def geometry(node, text: str, q: dict | None):
         if len(polygon) >= 3:
             polygons.append(unique_coordinates(polygon))
 
+    # Preserve a complete ordered polyline when LINE CONNECTING contains more
+    # than two positions.  The older pair-only expression kept the first leg
+    # and downgraded every later vertex to an unrelated point icon.
+    for match in re.finditer(
+        r"(?:LINE\s+CONNECTING|EITHER\s+SIDE\s+OF\s+A\s+LINE)\s*(.{0,1200}?)(?=\n\s*(?:PSN|POSITION|COORD)\b|\n\s*\n|\n\s*[F-Z]\)|$)",
+        body,
+        re.DOTALL,
+    ):
+        vertices = [
+            coordinate
+            for coordinate_match in COORDINATE_TEXT_PATTERN.finditer(match.group(1))
+            if (coordinate := decimal_coordinate(coordinate_match.group(0)))
+        ]
+        vertices = unique_coordinates(vertices)
+        if len(vertices) >= 2:
+            lines.append(vertices)
+
     for match in re.finditer(r"(?:LINE|LINE CONNECTING|EITHER SIDE OF A LINE|BETWEEN)\s*(?:POINT\s*)?(\d{4,6}(?:\.\d+)?\s*[NS]\s*\d{5,7}(?:\.\d+)?\s*[EW])\s*(?:-|TO|AND)\s*(?:POINT\s*)?(\d{4,6}(?:\.\d+)?\s*[NS]\s*\d{5,7}(?:\.\d+)?\s*[EW])", body):
         first, second = decimal_coordinate(match.group(1)), decimal_coordinate(match.group(2))
         if first and second:
             lines.append([first, second])
+
+    unique_lines = []
+    for line in lines:
+        key = tuple((round(point["latitude"], 5), round(point["longitude"], 5)) for point in line)
+        if not any(
+            key == tuple((round(point["latitude"], 5), round(point["longitude"], 5)) for point in existing)
+            or (len(line) == 2 and all(point in existing for point in line))
+            for existing in unique_lines
+        ):
+            unique_lines.append(line)
+    lines = unique_lines
 
     lines = [
         line for line in lines

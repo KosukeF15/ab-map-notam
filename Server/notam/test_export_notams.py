@@ -41,6 +41,19 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(circles, [])
         self.assertEqual(points, [])
 
+    def test_line_connecting_three_positions_is_one_complete_polyline(self):
+        node = ElementTree.fromstring("<notam />")
+        text = (
+            "E) LINE CONNECTING 353000N1393000E TO 354000N1394000E "
+            "TO 355000N1395000E"
+        )
+        polygons, lines, circles, points = geometry(node, text, None)
+        self.assertEqual(polygons, [])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0]), 3)
+        self.assertEqual(circles, [])
+        self.assertEqual(points, [])
+
 
 if __name__ == "__main__":
     unittest.main()
