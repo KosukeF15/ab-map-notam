@@ -153,6 +153,16 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: public
+
+  deploy:
+    needs: refresh
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Deploy in a separate job so GitHub's artifact index has finished
+      # propagating after upload-pages-artifact completes.
       - name: Publish to GitHub Pages
         uses: actions/deploy-pages@v5
         id: deployment
