@@ -34,8 +34,10 @@ AIRPORT_GROUPS = [
     ["ROKR", "ROYN", "ROMY", "RORE", "RJKA", "RJKB", "RJKI", "RJKN", "RORY"],
 ]
 
-MAX_LOCATION_ATTEMPTS = 3
+MAX_LOCATION_ATTEMPTS = 1
 RETRY_DELAY_SECONDS = 5
+DOWNLOAD_WAIT_SECONDS = 70
+SEARCH_WAIT_SECONDS = 60
 
 
 class NoDataAvailable(Exception):
@@ -195,7 +197,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     page.on("download", capture_download)
     try:
         download_button.click(force=True)
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + DOWNLOAD_WAIT_SECONDS
         while not downloads and not zip_payloads:
             if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
                 dismiss_ok_dialog(page)
@@ -238,7 +240,7 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     # Search is a separate action used here only to build the legacy text-ID
     # mapping consumed by the downstream converter.
     page.get_by_text("検索", exact=True).first.click(force=True)
-    search_deadline = time.monotonic() + 120
+    search_deadline = time.monotonic() + SEARCH_WAIT_SECONDS
     while time.monotonic() < search_deadline:
         if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
             dismiss_ok_dialog(page)
@@ -285,7 +287,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 1920, "height": 1080})
-        context.set_default_timeout(300_000)
+        context.set_default_timeout(90_000)
         login_page = context.new_page()
         login_page.goto(login_url, wait_until="domcontentloaded")
         login_page.fill("#swm-login-email", user_id)
