@@ -276,7 +276,7 @@ def geometry(node, text: str, q: dict | None):
     # than two positions.  The older pair-only expression kept the first leg
     # and downgraded every later vertex to an unrelated point icon.
     for match in re.finditer(
-        r"(?:LINE\s+CONNECTING|EITHER\s+SIDE\s+OF\s+A\s+LINE)\s*(.{0,1200}?)(?=\n\s*(?:PSN|POSITION|COORD)\b|\n\s*\n|\n\s*[F-Z]\)|$)",
+        r"(?:LINE\s+CONNECTING|EITHER\s+SIDE\s+OF\s+A\s+LINE)\s*(.{0,1200}?)(?=\n\s*\(\d+\)\s*AREA\s*:|\n\s*(?:PSN|POSITION|COORD)\b|\n\s*\n|\n\s*[F-Z]\)|$)",
         body,
         re.DOTALL,
     ):
@@ -317,6 +317,26 @@ def geometry(node, text: str, q: dict | None):
     ]
 
     without_polygons = re.sub(r"(?:BOUNDED BY|WI THE COORD AS FLW|WI THE COORDS AS FLW).*?(?=\n\s*[A-Z0-9.\-]+:|\n\s*\n|\(|F\)|$)", "", body, flags=re.DOTALL)
+
+    # Some SWIM NOTAMs specify one radius followed by tens of centres, for
+    # example "RADIUS 270M CENTER THE FLW POINTS".  Apply that radius to every
+    # coordinate in the section, stopping before the next numbered AREA.
+    for match in re.finditer(
+        r"((?:RADIUS|RAD)\s*(?:OF\s*)?\d+(?:\.\d+)?\s*(?:NM|M|KM))\s*"
+        r"CENT(?:ER|RE)(?:\s+THE)?\s+(?:FLW|FOLLOWING)\s+POINTS?\s*(.*?)"
+        r"(?=\n\s*\(\d+\)\s*AREA\s*:|\n\s*(?:WT|NUMBER|FLT\s+TIME|CONTACT\s+INFORMATION|RMK)\s*:|\n\s*\([A-Z]|$)",
+        without_polygons,
+        re.DOTALL,
+    ):
+        radius_match = RADIUS_PATTERN.search(match.group(1))
+        if not radius_match:
+            continue
+        radius = radius_nm(radius_match)
+        for coordinate_match in COORDINATE_TEXT_PATTERN.finditer(match.group(2)):
+            coordinate = decimal_coordinate(coordinate_match.group(0))
+            if coordinate:
+                circles.append({"center": coordinate, "radiusNM": radius})
+
     psn_points = unique_coordinates([
         coordinate
         for match in re.finditer(r"(?:PSN|POSITION|COORD)\s*[:\s]*([0-9.\s]+[NS]\s*[0-9.\s]+[EW])", without_polygons)
@@ -326,6 +346,17 @@ def geometry(node, text: str, q: dict | None):
     for coordinate_match in COORDINATE_TEXT_PATTERN.finditer(without_polygons):
         coordinate = decimal_coordinate(coordinate_match.group(0))
         if not coordinate:
+            continue
+        structural_points_so_far = (
+            [point for polygon in polygons for point in polygon]
+            + [point for line in lines for point in line]
+            + [circle["center"] for circle in circles]
+        )
+        if any(
+            abs(coordinate["latitude"] - point["latitude"]) < 0.0001
+            and abs(coordinate["longitude"] - point["longitude"]) < 0.0001
+            for point in structural_points_so_far
+        ):
             continue
         context = without_polygons[max(0, coordinate_match.start() - 50):min(len(without_polygons), coordinate_match.end() + 50)]
         nearby = list(RADIUS_PATTERN.finditer(context))

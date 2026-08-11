@@ -54,6 +54,23 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(circles, [])
         self.assertEqual(points, [])
 
+    def test_one_radius_applies_to_every_following_center(self):
+        node = ElementTree.fromstring("<notam />")
+        text = (
+            "E) (1)AREA: 362M EITHER SIDE OF A LINE "
+            "324123N1285221E - 324204N1285235E - 324230N1285247E\n"
+            "(2)AREA: RADIUS 270M CENTER THE FLW POINTS\n"
+            "324218N1285239E 324510N1285418E 324608N1285452E\n"
+            "WT: 21KG"
+        )
+        polygons, lines, circles, points = geometry(node, text, None)
+        self.assertEqual(polygons, [])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0]), 3)
+        self.assertEqual(len(circles), 3)
+        self.assertTrue(all(abs(circle["radiusNM"] - 270 / 1852) < 0.000001 for circle in circles))
+        self.assertEqual(points, [])
+
 
 if __name__ == "__main__":
     unittest.main()
