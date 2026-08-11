@@ -324,48 +324,16 @@ def main() -> None:
                     )
                     batch += 1
                     continue
-                if len(group) == 1:
-                    failed_codes.extend(group)
-                    print(f"Giving up this cycle for {' '.join(group)}; continuing with other locations.")
-                    try:
-                        recover_search_page(service_page, service_url)
-                    except Exception:
-                        pass
-                    continue
-                recover_search_page(service_page, service_url)
+                failed_codes.extend(group)
                 print(
-                    "Bulk download was not generated; retrying this group "
-                    "one location at a time."
+                    f"Giving up this cycle for {' '.join(group)}; "
+                    "the workflow will merge their last-known-good records and continue."
                 )
-                for code in group:
-                    try:
-                        individual = process_group_with_retries(
-                            service_page,
-                            [code],
-                            args.output,
-                            batch,
-                            service_url,
-                            MAX_LOCATION_ATTEMPTS,
-                        )
-                    except (PlaywrightTimeoutError, DownloadLimitExceeded, RuntimeError):
-                        downloaded = args.output / f"Notam_Batch_{batch}.zip"
-                        if downloaded.exists():
-                            print(
-                                f"Keeping downloaded XML for {code}; its domestic-ID text mapping "
-                                "was not available."
-                            )
-                            batch += 1
-                        else:
-                            failed_codes.append(code)
-                            print(f"Giving up this cycle for {code}; continuing with other locations.")
-                        try:
-                            recover_search_page(service_page, service_url)
-                        except Exception:
-                            pass
-                        continue
-                    if individual is not None:
-                        mapping.update(individual)
-                        batch += 1
+                try:
+                    recover_search_page(service_page, service_url)
+                except Exception:
+                    pass
+                continue
             else:
                 if result is not None:
                     mapping.update(result)
