@@ -171,119 +171,45 @@ def process_group(page: Page, group: list[str], output_dir: Path, batch: int) ->
     page.keyboard.press("Enter")
     configure_scope(page, enroute_only, other_only)
 
-    # The current SWIM guide specifies that bulk XML is downloaded directly
-    # from the search-condition form.  The download button must be pressed
-    # before Search; buttons shown in the results area are per-NOTAM GML
-    # downloads and follow a different workflow.
-    download_button = page.locator("button").filter(
-        has_text=re.compile(r"^\s*ダウンロード\s*$")
-    ).first
-    download_button.wait_for(state="visible", timeout=60_000)
-    if not download_button.is_enabled():
-        raise RuntimeError(f"XML download action is disabled for batch {batch}")
-
-    zip_payloads: list[bytes] = []
-    downloads = []
-
-    def capture_zip_response(response) -> None:
-        content_type = response.headers.get("content-type", "").lower()
-        disposition = response.headers.get("content-disposition", "").lower()
-        try:
-            payload = response.body()
-            if (
-                "zip" in content_type
-                or "attachment" in disposition
-                or ".zip" in disposition
-            ) and payload.startswith(b"PK"):
-                zip_payloads.append(payload)
-                return
-            if "json" in content_type and "download" in response.url.lower():
-                document = json.loads(payload)
-                encoded = document.get("datas", {}).get("fileData")
-                if encoded:
-                    decoded = base64.b64decode(encoded)
-                    if decoded.startswith(b"PK"):
-                        zip_payloads.append(decoded)
-        except Exception:
-            pass
-
-    def capture_download(download) -> None:
-        downloads.append(download)
-
-    page.on("response", capture_zip_response)
-    page.on("download", capture_download)
-    try:
-        download_button.click(force=True)
-        deadline = time.monotonic() + DOWNLOAD_WAIT_SECONDS
-        while not downloads and not zip_payloads:
-            if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
-                dismiss_ok_dialog(page)
-                raise NoDataAvailable
-            if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
-                dismiss_ok_dialog(page)
-                raise DownloadLimitExceeded
-            confirm_download_dialog(page)
-            if time.monotonic() >= deadline:
-                raise PlaywrightTimeoutError(
-                    f"No ZIP download or authenticated ZIP response for batch {batch}"
-                )
-            time.sleep(0.5)
-
-        destination = output_dir / f"Notam_Batch_{batch}.zip"
-        if downloads:
-            downloads[-1].save_as(destination)
-        else:
-            destination.write_bytes(zip_payloads[-1])
-            print(f"Captured batch {batch} from the authenticated ZIP response.")
-    except NoDataAvailable:
-        print(f"No current NOTAM data for batch {batch}; skipping it.")
-        return None
-    except PlaywrightTimeoutError:
-        if zip_payloads:
-            (output_dir / f"Notam_Batch_{batch}.zip").write_bytes(zip_payloads[-1])
-            print(f"Captured batch {batch} from the authenticated ZIP response.")
-        else:
-            dismiss_ok_dialog(page)
-            print(
-                f"Download event timed out for batch {batch}; "
-                f"button_visible={download_button.is_visible()} "
-                f"button_enabled={download_button.is_enabled()}"
-            )
-            raise
-    finally:
-        page.remove_listener("response", capture_zip_response)
-        page.remove_listener("download", capture_download)
-
-    # Search is a separate action used here only to build the legacy text-ID
-    # mapping consumed by the downstream converter.
+    # Preserve the proven sequence from the supplied NotamAcquisition.py:
+    # Search first, then download the result ZIP, then open the printable list.
     page.get_by_text("検索", exact=True).first.click(force=True)
-    search_deadline = time.monotonic() + SEARCH_WAIT_SECONDS
-    while time.monotonic() < search_deadline:
+    is_limit_warning = False
+    for _ in range(15):
+        time.sleep(1)
         if page.locator("text='IFUV000M8011'").is_visible() or page.locator("text='検索結果がありません'").is_visible():
             dismiss_ok_dialog(page)
+            print(f"No current NOTAM data for batch {batch}; skipping it.")
             return {}
         if page.locator("text='WFUV000M8015'").is_visible() or page.locator("text='上限の1000件'").is_visible():
-            print("Search reached the 1000-item limit; continuing with the available results.")
-            dismiss_ok_dialog(page)
-            time.sleep(2)
-        if page.get_by_text("リスト", exact=True).count():
+            is_limit_warning = True
             break
-        time.sleep(1)
-    else:
-        raise RuntimeError(f"Search results did not become available for batch {batch}")
 
-    page.click("text='リスト'", force=True)
-    search_url = page.url
-    page.locator("text=/印刷.*全件/").first.click(force=True, timeout=30_000)
+    if is_limit_warning:
+        print("Search reached the 1000-item limit; continuing with the available results.")
+        dismiss_ok_dialog(page)
+        time.sleep(2)
+
+    destination = output_dir / f"Notam_Batch_{batch}.zip"
+    with page.expect_download(timeout=60_000) as download_info:
+        page.get_by_text("ダウンロード", exact=True).first.click(force=True)
+    download_info.value.save_as(destination)
+    print(f"Saved {destination.name}")
+
+    page.get_by_text("リスト", exact=True).first.click(force=True)
     time.sleep(5)
+    page.locator("text=/印刷.*全件/").first.click(force=True, timeout=30_000)
+    time.sleep(8)
     all_text = ""
     for frame in page.frames:
         try:
             all_text += "\n" + frame.locator("body").inner_text()
         except Exception:
             pass
-    page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
+
+    page.get_by_text("戻る", exact=True).first.click(force=True)
     location_input.wait_for(state="visible", timeout=60_000)
+    time.sleep(2)
     return extract_notam_mapping(all_text)
 
 
