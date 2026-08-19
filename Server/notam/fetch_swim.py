@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -63,6 +64,20 @@ class NoDataAvailable(Exception):
 
 class DownloadLimitExceeded(Exception):
     """SWIM refused a bulk download because it exceeded the result limit."""
+
+
+def launch_browser(playwright):
+    """Prefer the Chrome bundled on GitHub-hosted runners.
+
+    This avoids downloading a second browser and apt dependencies on every
+    three-hour refresh. Local/manual runs still fall back to Playwright's
+    managed Chromium when no system browser is available.
+    """
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if executable_path := shutil.which(name):
+            print(f"Launching hosted browser: {executable_path}")
+            return playwright.chromium.launch(headless=True, executable_path=executable_path)
+    return playwright.chromium.launch(headless=True)
 
 
 def extract_notam_mapping(text: str) -> dict:
@@ -228,7 +243,7 @@ def main() -> None:
         old_file.unlink()
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = launch_browser(playwright)
         context = browser.new_context(viewport={"width": 1920, "height": 1080})
         context.set_default_timeout(90_000)
         login_page = context.new_page()

@@ -75,8 +75,9 @@ jobs:
       - name: Test NOTAM geometry parsing
         if: steps.swim.outputs.configured == 'true'
         run: python -m unittest discover -s Server/notam -p 'test_*.py' -v
-      - if: steps.swim.outputs.configured == 'true'
-        run: python -m playwright install --with-deps chromium
+      - name: Check hosted Chrome
+        if: steps.swim.outputs.configured == 'true'
+        run: google-chrome --version
       - name: Acquire current SWIM data
         id: acquire
         if: steps.swim.outputs.configured == 'true'
