@@ -1,10 +1,17 @@
 import unittest
 from xml.etree import ElementTree
 
-from export_notams import exclusion_circles, geometry
+from export_notams import exclusion_circles, geometry, q_line
 
 
 class GeometryTests(unittest.TestCase):
+    def test_q_line_preserves_web_filter_metadata(self):
+        parsed = q_line("Q) RJJJ/QWALW/IV/M/W/000/999/3500N13900E180")
+
+        self.assertEqual(parsed["qcode"], "QWALW")
+        self.assertEqual(parsed["scope"], "W")
+        self.assertEqual(parsed["radius"], 180)
+
     def test_all_positions_after_single_psn_label_are_preserved(self):
         node = ElementTree.fromstring("<notam />")
         text = (
