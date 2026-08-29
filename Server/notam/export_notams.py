@@ -73,6 +73,39 @@ TRANSLATIONS = {
     },
 }
 
+# JCAB "Digital NOTAM Specification" version 1.0 (2026-02-16), table 1
+# and sections 3.1-3.9.  Keeping this authoritative scenario metadata in the
+# feed lets the native detail sheet explain which AIXM feature the NOTAM
+# modifies instead of guessing only from free-form Item E text.
+SCENARIO_METADATA = {
+    "AD.CLS/LIM.JP": ("飛行場／ヘリポートの閉鎖・制限", ["AirportHeliport"]),
+    "RWY.CLS/LIM.JP": ("滑走路の閉鎖・制限", ["Runway", "RunwayDirection"]),
+    "TWY.CLS/LIM.JP": ("誘導路の閉鎖・制限", ["Taxiway", "TaxiwayElement"]),
+    "APN.CLS/LIM.JP": ("エプロンの閉鎖・制限", ["Apron", "ApronElement"]),
+    "STAND.CLS/LIM.JP": ("スポットの閉鎖・制限", ["AircraftStand"]),
+    "SFC.CON.RWY.JP": ("スノータム", ["AirportHeliport"]),
+    "SFC.CON.TWY.JP": ("誘導路／エプロンのブレーキングアクション", ["AirportHeliport"]),
+    "RCLL.UNS.JP": ("滑走路中心線灯の機能停止", ["RunwayDirectionLightSystem"]),
+    "TWCL.UNS.JP": ("誘導路中心線灯の機能停止", ["TaxiwayLightSystem"]),
+    "OBL.UNS.JP": ("航空障害灯の機能停止", ["VerticalStructure"]),
+    "OBM.UNS.JP": ("昼間障害標識の機能停止", ["VerticalStructure"]),
+    "ILS.UNS.JP": ("無線施設（ILS）の運用停止・試験電波発射", ["Localizer", "Glidepath", "DME", "MarkerBeacon"]),
+    "NAV.UNS.JP": ("無線施設（ILS以外）の運用停止・試験電波発射", ["VOR", "DME", "TACAN"]),
+    "RAIM.OUT.JP": ("RAIM予測情報等の提供", ["AirportHeliport", "Airspace"]),
+    "OBS.NEW.JP": ("障害物件", ["VerticalStructure"]),
+    "OBS.PSS.JP": ("AIPに公示される船舶の通過", ["AirportHeliport"]),
+    "SAA.ACT.JP": ("公示空域の使用", ["Airspace"]),
+    "SAA.NEW.JP": ("航空機の航行に影響を及ぼす行為等", ["Airspace"]),
+    "FLW.CTL.JP": ("交通流制御", ["Airspace", "Route"]),
+    "CDR.ACT.JP": ("CDR2の運用", ["Airspace"]),
+    "PACOTS.JP": ("PACOTSの設定", ["Airspace"]),
+    "OTH.EVT.JP": ("その他の事象", ["AirportHeliport", "Airspace"]),
+    "OTH.SPC.JP": ("その他の事象（特殊）", ["AIXM Feature"]),
+    "J.NTM.JP": ("自衛隊飛行場に関するNOTAM", []),
+    "F.NTM.JP": ("外国NOTAM", []),
+    "SFC.CON.F.JP": ("外国SNOWTAM", []),
+}
+
 
 def local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
@@ -87,6 +120,20 @@ def first_text(node, names: set[str]) -> str | None:
 
 def all_text(node, name: str) -> list[str]:
     return [child.text.strip() for child in node.iter() if local_name(child.tag) == name and child.text and child.text.strip()]
+
+
+def scenario_by_notam(root) -> dict[int, str]:
+    output = {}
+    for event_slice in root.iter():
+        if local_name(event_slice.tag) != "EventTimeSlice":
+            continue
+        scenario = first_text(event_slice, {"scenario"})
+        if not scenario:
+            continue
+        for candidate in event_slice.iter():
+            if local_name(candidate.tag) == "NOTAM":
+                output[id(candidate)] = scenario
+    return output
 
 
 def decimal_coordinate(value: str | None):
@@ -440,6 +487,8 @@ def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) 
                 root = ElementTree.fromstring(archive.read(filename))
             except ElementTree.ParseError:
                 continue
+            scenarios = scenario_by_notam(root)
+            root_scenario = first_text(root, {"scenario"})
             for node in root.iter():
                 if local_name(node.tag) != "NOTAM":
                     continue
@@ -483,6 +532,8 @@ def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) 
                 upper = first_text(node, {"upperLimit"}) or item_g or "UNL"
                 radius = max((item["radiusNM"] for item in circles), default=None)
                 identifier = domestic_id or international_id
+                scenario = scenarios.get(id(node)) or root_scenario
+                scenario_name, feature_types = SCENARIO_METADATA.get(scenario, (None, []))
                 output.append({
                     "id": identifier,
                     "domesticID": domestic_id,
@@ -490,6 +541,9 @@ def features_from_zip(zip_path: Path, mapping: dict, airports: dict[str, dict]) 
                     "category": category(target),
                     "qCode": q.get("qcode") if q else None,
                     "scope": q.get("scope") if q else None,
+                    "scenario": scenario,
+                    "scenarioName": scenario_name,
+                    "featureTypes": feature_types,
                     "hasAIPSupplement": "REF AIP SUP" in text.upper(),
                     "isWideArea": bool(q and q.get("radius", 0) >= 150),
                     "locationCode": location,

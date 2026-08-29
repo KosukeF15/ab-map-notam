@@ -1,10 +1,24 @@
 import unittest
 from xml.etree import ElementTree
 
-from export_notams import exclusion_circles, geometry, q_line
+from export_notams import SCENARIO_METADATA, exclusion_circles, geometry, q_line, scenario_by_notam
 
 
 class GeometryTests(unittest.TestCase):
+    def test_official_scenario_metadata_is_attached_to_nested_notam(self):
+        root = ElementTree.fromstring(
+            """
+            <EventTimeSlice>
+              <scenario>NAV.UNS.JP</scenario>
+              <textNOTAM><NOTAM><series>A</series></NOTAM></textNOTAM>
+            </EventTimeSlice>
+            """
+        )
+        notam = next(node for node in root.iter() if node.tag == "NOTAM")
+
+        self.assertEqual(scenario_by_notam(root)[id(notam)], "NAV.UNS.JP")
+        self.assertEqual(SCENARIO_METADATA["NAV.UNS.JP"][1], ["VOR", "DME", "TACAN"])
+
     def test_q_line_preserves_web_filter_metadata(self):
         parsed = q_line("Q) RJJJ/QWALW/IV/M/W/000/999/3500N13900E180")
 
@@ -24,6 +38,10 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(lines, [])
         self.assertEqual(circles, [])
         self.assertEqual(len(points), 3)
+        self.assertEqual(
+            {(round(point["latitude"], 6), round(point["longitude"], 6)) for point in points},
+            {(35.5, 139.5), (35.666667, 139.666667), (35.833333, 139.833333)},
+        )
 
     def test_independent_point_is_preserved_with_line_geometry(self):
         node = ElementTree.fromstring("<notam />")
@@ -36,6 +54,8 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(circles, [])
         self.assertEqual(len(points), 1)
+        self.assertAlmostEqual(points[0]["latitude"], 35.833333, places=6)
+        self.assertAlmostEqual(points[0]["longitude"], 139.833333, places=6)
 
     def test_polygon_vertices_are_not_duplicated_as_point_icons(self):
         node = ElementTree.fromstring(
