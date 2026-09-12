@@ -31,6 +31,7 @@ RADIUS_PATTERN = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*(NM|M|KM)\s*(?:RADIUS|RAD)\b",
     re.IGNORECASE,
 )
+COORDINATE_TOLERANCE = 1e-7
 
 TRANSLATIONS = {
     "reason": {
@@ -165,7 +166,11 @@ def decimal_coordinate(value: str | None):
 def unique_coordinates(items: list[dict]) -> list[dict]:
     output = []
     for item in items:
-        if not any(abs(item["latitude"] - seen["latitude"]) < 0.0001 and abs(item["longitude"] - seen["longitude"]) < 0.0001 for seen in output):
+        if not any(
+            abs(item["latitude"] - seen["latitude"]) < COORDINATE_TOLERANCE
+            and abs(item["longitude"] - seen["longitude"]) < COORDINATE_TOLERANCE
+            for seen in output
+        ):
             output.append(item)
     return output
 
@@ -316,8 +321,14 @@ def geometry(node, text: str, q: dict | None):
         block = re.split(r"(?:TO POINT OF ORIGIN|TO ORIGIN|TO BEG|EXCLUDING|EXCEPT|EXC\b|ATC WILL NOT|PORTION|RMK|THE LINE CONNECTING)", match.group(1))[0]
         polygon = [decimal_coordinate(item.group(0)) for item in COORDINATE_TEXT_PATTERN.finditer(block)]
         polygon = [item for item in polygon if item]
-        if len(polygon) >= 3:
-            polygons.append(unique_coordinates(polygon))
+        unique_polygon = unique_coordinates(polygon)
+        if len(unique_polygon) >= 3:
+            polygons.append(unique_polygon)
+        elif len(unique_polygon) == 2:
+            # A narrow obstacle or work area is sometimes published with two
+            # boundary positions.  It is not a valid polygon, but discarding
+            # it loses the actual location; preserve it as a line instead.
+            lines.append(unique_polygon)
 
     # Preserve a complete ordered polyline when LINE CONNECTING contains more
     # than two positions.  The older pair-only expression kept the first leg
@@ -343,9 +354,9 @@ def geometry(node, text: str, q: dict | None):
 
     unique_lines = []
     for line in lines:
-        key = tuple((round(point["latitude"], 5), round(point["longitude"], 5)) for point in line)
+        key = tuple((round(point["latitude"], 7), round(point["longitude"], 7)) for point in line)
         if not any(
-            key == tuple((round(point["latitude"], 5), round(point["longitude"], 5)) for point in existing)
+            key == tuple((round(point["latitude"], 7), round(point["longitude"], 7)) for point in existing)
             or (len(line) == 2 and all(point in existing for point in line))
             for existing in unique_lines
         ):
@@ -356,7 +367,7 @@ def geometry(node, text: str, q: dict | None):
         line for line in lines
         if not any(
             all(
-                any(abs(point["latitude"] - vertex["latitude"]) < 0.0001 and abs(point["longitude"] - vertex["longitude"]) < 0.0001 for vertex in polygon)
+                any(abs(point["latitude"] - vertex["latitude"]) < COORDINATE_TOLERANCE and abs(point["longitude"] - vertex["longitude"]) < COORDINATE_TOLERANCE for vertex in polygon)
                 for point in line
             )
             for polygon in polygons
@@ -400,8 +411,8 @@ def geometry(node, text: str, q: dict | None):
             + [circle["center"] for circle in circles]
         )
         if any(
-            abs(coordinate["latitude"] - point["latitude"]) < 0.0001
-            and abs(coordinate["longitude"] - point["longitude"]) < 0.0001
+            abs(coordinate["latitude"] - point["latitude"]) < COORDINATE_TOLERANCE
+            and abs(coordinate["longitude"] - point["longitude"]) < COORDINATE_TOLERANCE
             for point in structural_points_so_far
         ):
             continue
@@ -410,12 +421,12 @@ def geometry(node, text: str, q: dict | None):
         if nearby:
             selected = min(nearby, key=lambda item: abs(((item.start() + item.end()) / 2) - (coordinate_match.start() - max(0, coordinate_match.start() - 50))))
             circles.append({"center": coordinate, "radiusNM": radius_nm(selected)})
-        elif not center or abs(center["latitude"] - coordinate["latitude"]) > 0.0001 or abs(center["longitude"] - coordinate["longitude"]) > 0.0001:
+        elif not center or abs(center["latitude"] - coordinate["latitude"]) > COORDINATE_TOLERANCE or abs(center["longitude"] - coordinate["longitude"]) > COORDINATE_TOLERANCE:
             points.append(coordinate)
 
     circles_by_key = {}
     for circle in circles:
-        key = (round(circle["center"]["latitude"], 5), round(circle["center"]["longitude"], 5), round(circle["radiusNM"], 3))
+        key = (round(circle["center"]["latitude"], 7), round(circle["center"]["longitude"], 7), round(circle["radiusNM"], 3))
         circles_by_key[key] = circle
     circles = list(circles_by_key.values())
     structural_points = (
@@ -426,8 +437,8 @@ def geometry(node, text: str, q: dict | None):
     points = [
         point for point in unique_coordinates(psn_points + points)
         if not any(
-            abs(point["latitude"] - structural_point["latitude"]) < 0.0001
-            and abs(point["longitude"] - structural_point["longitude"]) < 0.0001
+            abs(point["latitude"] - structural_point["latitude"]) < COORDINATE_TOLERANCE
+            and abs(point["longitude"] - structural_point["longitude"]) < COORDINATE_TOLERANCE
             for structural_point in structural_points
         )
     ]
@@ -469,8 +480,8 @@ def exclusion_circles(text: str) -> list[dict]:
     by_key = {}
     for circle in output:
         key = (
-            round(circle["center"]["latitude"], 5),
-            round(circle["center"]["longitude"], 5),
+            round(circle["center"]["latitude"], 7),
+            round(circle["center"]["longitude"], 7),
             round(circle["radiusNM"], 3),
         )
         by_key[key] = circle

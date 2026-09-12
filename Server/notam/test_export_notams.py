@@ -68,6 +68,39 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(circles, [])
         self.assertEqual(points, [])
 
+    def test_close_obstacle_vertices_are_not_collapsed(self):
+        node = ElementTree.fromstring("<notam />")
+        text = (
+            "E) PSN: BOUNDED BY FLW POINT\n"
+            "342551.27818N1351508.25634E - 342551.35384N1351508.18240E -\n"
+            "342522.55568N1351425.26536E - 342522.48002N1351425.33931E -\n"
+            "342551.27818N1351508.25634E\n(1180M BEYOND THR)"
+        )
+
+        polygons, lines, circles, points = geometry(node, text, None)
+
+        self.assertEqual(len(polygons), 1)
+        self.assertEqual(len(polygons[0]), 4)
+        self.assertEqual(lines, [])
+        self.assertEqual(circles, [])
+        self.assertEqual(points, [])
+
+    def test_two_position_boundary_is_preserved_as_line(self):
+        node = ElementTree.fromstring("<notam />")
+        text = (
+            "E) CRANE EXIST\n1.PSN: BOUNDED BY FLW POINT\n"
+            "335126.52N1310148.85E - 335126.43N1310147.91E\n"
+            "(106M BFR RWY 18 THR)"
+        )
+
+        polygons, lines, circles, points = geometry(node, text, None)
+
+        self.assertEqual(polygons, [])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0]), 2)
+        self.assertEqual(circles, [])
+        self.assertEqual(points, [])
+
     def test_line_connecting_three_positions_is_one_complete_polyline(self):
         node = ElementTree.fromstring("<notam />")
         text = (
